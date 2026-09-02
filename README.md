@@ -9,8 +9,6 @@ A simple desktop app that types text for you — like an auto-clicker, but for y
 - **Adjustable speed** — control the base delay per character
 - **Start delay countdown** — gives you time to click into the target window before typing begins
 - **Loop mode** — repeat the same text continuously
-- **Code-safe newlines** — clears editor auto-indent (e.g. in VS Code) after each Enter press so your own formatting doesn't get mangled
-- **Presets** — save and reload frequently used text snippets
 - **Failsafe** — flick your mouse to any screen corner to instantly abort typing
 
 ## Requirements
@@ -55,9 +53,8 @@ pip install pyinstaller
 python -m PyInstaller --onefile --windowed --name "AutoTyper" auto_typer.py
 ```
 
-The finished exe will be at `dist/AutoTyper.exe` — move it anywhere and double-click to run. Windows SmartScreen may warn about it the first time since it's unsigned; click "More info" → "Run anyway."
+The finished exe will be at `dist/AutoTyper.exe` — move it anywhere and double-click to run. Windows SmartScreen may warn about it the first time since it's unsigned; click "More info" then "Run anyway."
 
-> Note: `.exe` builds don't currently work reliably with the F8 global-hotkey feature (`keyboard` module) — if you build the exe and F8 doesn't stop typing, use the mouse-corner failsafe or the on-screen Stop button instead.
 
 ## Notes
 
