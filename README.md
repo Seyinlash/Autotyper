@@ -1,21 +1,21 @@
 # Auto Typer
 
-A simple desktop app that types text for you — like an auto-clicker, but for your keyboard. Built with Python and Tkinter, using `pyautogui` to simulate real keystrokes anywhere on your screen (browser, chat, docs, code editor, etc).
+A simple desktop app that types text for you - like an auto-clicker, but for your keyboard. Built with Python and Tkinter, using `pyautogui` to simulate real keystrokes anywhere on your screen (browser, chat, docs, code editor, etc).
 
 ## Features
 
-- **GUI text input** — paste or write whatever you want typed
-- **Human-like typing** — randomized delays between keystrokes and occasional "thinking" pauses, so it doesn't look like an instant paste
-- **Adjustable speed** — control the base delay per character
-- **Start delay countdown** — gives you time to click into the target window before typing begins
-- **Loop mode** — repeat the same text continuously
-- **Failsafe** — flick your mouse to any screen corner to instantly abort typing
+- **GUI text input** - paste or write whatever you want typed
+- **Human-like typing** - randomized delays between keystrokes and occasional "thinking" pauses, so it doesn't look like an instant paste
+- **Adjustable speed** - control the base delay per character
+- **Start delay countdown** - gives you time to click into the target window before typing begins
+- **Loop mode** - repeat the same text continuously
+- **Failsafe** - flick your mouse to any screen corner to instantly abort typing
 
 ## Requirements
 
 - Python 3.x
 - [`pyautogui`](https://pypi.org/project/PyAutoGUI/)
-- (Optional) [`keyboard`](https://pypi.org/project/keyboard/) — enables a global F8 stop hotkey
+- (Optional) [`keyboard`](https://pypi.org/project/keyboard/) - enables a global F8 stop hotkey
 
 Install dependencies:
 
@@ -29,7 +29,7 @@ Once it's open (any method below), using it is the same:
 1. Paste or type the text you want typed out
 2. Set a start delay (time to click into your target window)
 3. Adjust typing speed and toggle human-like variation / code-safe newlines as needed
-4. Click **Start** — it'll count down, then begin typing automatically wherever your cursor is
+4. Click **Start**  it'll count down, then begin typing automatically wherever your cursor is
 
 There are three ways to launch it:
 
@@ -53,12 +53,12 @@ pip install pyinstaller
 python -m PyInstaller --onefile --windowed --name "AutoTyper" auto_typer.py
 ```
 
-The finished exe will be at `dist/AutoTyper.exe` — move it anywhere and double-click to run. Windows SmartScreen may warn about it the first time since it's unsigned; click "More info" then "Run anyway."
+The finished exe will be at `dist/AutoTyper.exe`  move it anywhere and double-click to run. Windows SmartScreen may warn about it the first time since it's unsigned; click "More info" then "Run anyway."
 
 
 ## Notes
 
-- Works in any application that accepts keyboard input — it's simulating real keystrokes system-wide, not pasting.
+- Works in any application that accepts keyboard input  it's simulating real keystrokes system-wide, not pasting.
 - Built as a personal automation tool.
 
 ## License
