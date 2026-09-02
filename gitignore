@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Auto Typer saved presets (personal data, don't need to be in the repo)
+auto_typer_presets.json
+
+# OS junk
+.DS_Store
+Thumbs.db
