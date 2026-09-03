@@ -26,55 +26,96 @@ except ImportError:
 
 pyautogui_failsafe = True  # moving mouse to screen corner aborts typing
 
+LIGHT = {
+    "bg": "#f2f2f2",
+    "fg": "#111111",
+    "text_bg": "#ffffff",
+    "text_fg": "#111111",
+    "status_fg": "#555555",
+    "hint_fg": "#777777",
+}
+DARK = {
+    "bg": "#1e1e1e",
+    "fg": "#e8e8e8",
+    "text_bg": "#2b2b2b",
+    "text_fg": "#e8e8e8",
+    "status_fg": "#aaaaaa",
+    "hint_fg": "#888888",
+}
+
 
 class AutoTyperApp:
     def __init__(self, root):
         self.root = root
         root.title("Auto Typer")
-        root.geometry("520x480")
-        root.resizable(False, False)
+        root.geometry("700x680")
+        root.minsize(560, 560)
+        # resizable + maximizable now (removed the fixed/locked size)
 
         self.typing_thread = None
         self.stop_flag = threading.Event()
+        self.dark_mode = tk.BooleanVar(value=False)
+
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("clam")  # clam lets us actually recolor ttk widgets
+        except tk.TclError:
+            pass
 
         pad = {"padx": 10, "pady": 6}
 
-        # --- Text input ---
-        ttk.Label(root, text="Text to type:").pack(anchor="w", **pad)
-        self.text_box = tk.Text(root, height=10, wrap="word")
-        self.text_box.pack(fill="both", expand=True, padx=10)
+        # --- Top bar: label + dark mode toggle ---
+        top_bar = ttk.Frame(root)
+        top_bar.pack(fill="x", padx=10, pady=(10, 0))
+        self.label_text = ttk.Label(top_bar, text="Text to type:")
+        self.label_text.pack(side="left")
+        self.dark_check = ttk.Checkbutton(top_bar, text="Dark mode", variable=self.dark_mode,
+                                           command=self.apply_theme)
+        self.dark_check.pack(side="right")
+
+        # --- Text input with both scrollbars, no word-wrap ---
+        text_frame = ttk.Frame(root)
+        text_frame.pack(fill="both", expand=True, padx=10, pady=(4, 0))
+        text_frame.rowconfigure(0, weight=1)
+        text_frame.columnconfigure(0, weight=1)
+
+        self.text_box = tk.Text(text_frame, wrap="none", undo=True)
+        self.text_box.grid(row=0, column=0, sticky="nsew")
+
+        y_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=self.text_box.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(text_frame, orient="horizontal", command=self.text_box.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.text_box.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
 
         # --- Options frame ---
         opts = ttk.Frame(root)
         opts.pack(fill="x", **pad)
 
-        # Start delay
         ttk.Label(opts, text="Start delay (sec):").grid(row=0, column=0, sticky="w")
         self.start_delay = tk.DoubleVar(value=5.0)
         ttk.Spinbox(opts, from_=0, to=60, increment=0.5, textvariable=self.start_delay,
                     width=6).grid(row=0, column=1, padx=(4, 20))
 
-        # Typing speed
         ttk.Label(opts, text="Base delay/char (sec):").grid(row=0, column=2, sticky="w")
         self.char_delay = tk.DoubleVar(value=0.05)
         ttk.Spinbox(opts, from_=0.0, to=1.0, increment=0.01, textvariable=self.char_delay,
                     width=6).grid(row=0, column=3, padx=4)
 
-        # Human-like variation
         self.human_mode = tk.BooleanVar(value=True)
         ttk.Checkbutton(opts, text="Human-like variation (random pauses)",
                          variable=self.human_mode).grid(row=1, column=0, columnspan=2,
                                                          sticky="w", pady=(8, 0))
 
-        # Loop
         self.loop_mode = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts, text="Repeat / loop", variable=self.loop_mode).grid(
             row=1, column=2, columnspan=2, sticky="w", pady=(8, 0))
 
         # --- Status ---
         self.status_var = tk.StringVar(value="Ready.")
-        ttk.Label(root, textvariable=self.status_var, foreground="gray").pack(
-            anchor="w", padx=10, pady=(4, 0))
+        self.status_label = ttk.Label(root, textvariable=self.status_var)
+        self.status_label.pack(anchor="w", padx=10, pady=(4, 0))
 
         # --- Buttons ---
         btns = ttk.Frame(root)
@@ -84,8 +125,10 @@ class AutoTyperApp:
         self.stop_btn = ttk.Button(btns, text="Stop", command=self.stop_typing, state="disabled")
         self.stop_btn.pack(side="left")
 
-        ttk.Label(root, text="Tip: flick mouse to a screen corner anytime to abort.",
-                  foreground="gray").pack(anchor="w", padx=10, pady=(0, 8))
+        self.hint_label = ttk.Label(root, text="Tip: flick mouse to a screen corner anytime to abort.")
+        self.hint_label.pack(anchor="w", padx=10, pady=(0, 8))
+
+        self.apply_theme()
 
         if pyautogui is None:
             messagebox.showwarning(
@@ -93,6 +136,20 @@ class AutoTyperApp:
                 "pyautogui isn't installed.\n\nRun this in a terminal:\n"
                 "    pip install pyautogui\n\nthen restart this app."
             )
+
+    def apply_theme(self):
+        c = DARK if self.dark_mode.get() else LIGHT
+
+        self.root.configure(bg=c["bg"])
+        self.style.configure("TFrame", background=c["bg"])
+        self.style.configure("TLabel", background=c["bg"], foreground=c["fg"])
+        self.style.configure("TCheckbutton", background=c["bg"], foreground=c["fg"])
+        self.style.configure("TButton", background=c["bg"], foreground=c["fg"])
+        self.style.configure("TSpinbox", fieldbackground=c["text_bg"], foreground=c["text_fg"])
+
+        self.text_box.configure(bg=c["text_bg"], fg=c["text_fg"], insertbackground=c["fg"])
+        self.status_label.configure(foreground=c["status_fg"])
+        self.hint_label.configure(foreground=c["hint_fg"])
 
     def start_typing(self):
         if pyautogui is None:
