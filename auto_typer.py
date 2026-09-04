@@ -1,5 +1,5 @@
 """
-Auto Typer - types out text for you, human-style
+Auto Typer - types out text for you,
 --------------------------------------------------
 Requires: pyautogui  (install with: pip install pyautogui)
 
