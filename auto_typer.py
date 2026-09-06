@@ -1,5 +1,5 @@
 """
-Auto Typer - types out text for you,
+Auto Typer - types out text for you, human-style
 --------------------------------------------------
 Requires: pyautogui  (install with: pip install pyautogui)
 
@@ -8,7 +8,7 @@ How it works:
 2. Set a "start delay" - time to click into the target window
    (browser, doc, chat box, whatever) before typing begins.
 3. Set typing speed + how "human" it should look (random pauses,
-   occasional slightly-varied timing).
+   occasional typos that get backspaced and fixed).
 4. Hit Start. Move your mouse to the top-left corner of the screen
    at ANY time to abort instantly (pyautogui failsafe).
 """
@@ -18,6 +18,9 @@ from tkinter import ttk, messagebox
 import threading
 import time
 import random
+import re
+import json
+import os
 
 try:
     import pyautogui
@@ -43,6 +46,25 @@ DARK = {
     "hint_fg": "#888888",
 }
 
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".auto_typer_settings.json")
+TYPO_CHARS = "abcdefghijklmnopqrstuvwxyz"
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_settings(data):
+    try:
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass  # non-critical, just skip saving if it fails
+
 
 class AutoTyperApp:
     def __init__(self, root):
@@ -50,15 +72,16 @@ class AutoTyperApp:
         root.title("Auto Typer")
         root.geometry("700x680")
         root.minsize(560, 560)
-        # resizable + maximizable now (removed the fixed/locked size)
 
         self.typing_thread = None
         self.stop_flag = threading.Event()
-        self.dark_mode = tk.BooleanVar(value=False)
+
+        settings = load_settings()
+        self.dark_mode = tk.BooleanVar(value=settings.get("dark_mode", False))
 
         self.style = ttk.Style()
         try:
-            self.style.theme_use("clam")  # clam lets us actually recolor ttk widgets
+            self.style.theme_use("clam")
         except tk.TclError:
             pass
 
@@ -70,7 +93,7 @@ class AutoTyperApp:
         self.label_text = ttk.Label(top_bar, text="Text to type:")
         self.label_text.pack(side="left")
         self.dark_check = ttk.Checkbutton(top_bar, text="Dark mode", variable=self.dark_mode,
-                                           command=self.apply_theme)
+                                           command=self.on_dark_mode_toggle)
         self.dark_check.pack(side="right")
 
         # --- Text input with both scrollbars, no word-wrap ---
@@ -112,10 +135,33 @@ class AutoTyperApp:
         ttk.Checkbutton(opts, text="Repeat / loop", variable=self.loop_mode).grid(
             row=1, column=2, columnspan=2, sticky="w", pady=(8, 0))
 
+        self.fix_indent = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            opts,
+            text="Fix editor auto-indent (recommended for VS Code / IDEs)",
+            variable=self.fix_indent
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+        self.typo_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            opts,
+            text="Simulate typos (randomly misspell a word, then backspace + fix it)",
+            variable=self.typo_mode
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        ttk.Label(opts, text="Typo chance (%):").grid(row=3, column=2, sticky="w", pady=(4, 0))
+        self.typo_chance = tk.DoubleVar(value=6.0)
+        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.typo_chance,
+                    width=6).grid(row=3, column=3, padx=4, pady=(4, 0))
+
         # --- Status ---
         self.status_var = tk.StringVar(value="Ready.")
         self.status_label = ttk.Label(root, textvariable=self.status_var)
         self.status_label.pack(anchor="w", padx=10, pady=(4, 0))
+
+        self.estimate_var = tk.StringVar(value="Estimated typing time: —")
+        self.estimate_label = ttk.Label(root, textvariable=self.estimate_var)
+        self.estimate_label.pack(anchor="w", padx=10, pady=(0, 0))
 
         # --- Buttons ---
         btns = ttk.Frame(root)
@@ -129,6 +175,14 @@ class AutoTyperApp:
         self.hint_label.pack(anchor="w", padx=10, pady=(0, 8))
 
         self.apply_theme()
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # --- live time estimate: recalculate whenever text or settings change ---
+        self.text_box.bind("<<Modified>>", self._on_text_modified)
+        for var in (self.char_delay, self.human_mode, self.fix_indent,
+                    self.typo_mode, self.typo_chance):
+            var.trace_add("write", lambda *args: self.update_estimate())
+        self.update_estimate()
 
         if pyautogui is None:
             messagebox.showwarning(
@@ -136,6 +190,64 @@ class AutoTyperApp:
                 "pyautogui isn't installed.\n\nRun this in a terminal:\n"
                 "    pip install pyautogui\n\nthen restart this app."
             )
+
+    def _on_text_modified(self, event=None):
+        self.text_box.edit_modified(False)  # reset flag so event fires again next edit
+        self.update_estimate()
+
+    def update_estimate(self):
+        text = self.text_box.get("1.0", "end-1c")
+        if not text:
+            self.estimate_var.set("Estimated typing time: —")
+            return
+
+        try:
+            base_delay = max(self.char_delay.get(), 0.0)
+        except tk.TclError:
+            base_delay = 0.05
+        human = self.human_mode.get()
+        fix_indent = self.fix_indent.get()
+        typo_on = self.typo_mode.get()
+        try:
+            typo_chance = self.typo_chance.get() / 100.0
+        except tk.TclError:
+            typo_chance = 0.0
+
+        # average per-character delay, accounting for the occasional
+        # longer "thinking" pause human mode adds (~3% chance, ~0.275s extra)
+        avg_char_delay = base_delay + (0.03 * 0.275 if human else 0.0)
+
+        n_chars = len(text.replace("\n", ""))
+        n_lines = text.count("\n")
+
+        base_seconds = n_chars * avg_char_delay
+        # newline overhead: matches the pause after each Enter in the typing loop
+        line_seconds = n_lines * (base_delay + (0.02 if fix_indent else 0.0))
+
+        typo_seconds = 0.0
+        if typo_on:
+            words = re.findall(r"\S+", text)
+            eligible = [w for w in words if len(w) >= 3]
+            expected_typos = len(eligible) * typo_chance
+            # extra: one wrong char + noticing pause (~0.275s avg) + one backspace
+            typo_seconds = expected_typos * (2 * avg_char_delay + 0.275)
+
+        total = base_seconds + line_seconds + typo_seconds
+
+        if total < 60:
+            self.estimate_var.set(f"Estimated typing time: ~{total:.1f}s")
+        else:
+            mins = int(total // 60)
+            secs = total % 60
+            self.estimate_var.set(f"Estimated typing time: ~{mins}m {secs:.0f}s")
+
+    def on_dark_mode_toggle(self):
+        self.apply_theme()
+        save_settings({"dark_mode": self.dark_mode.get()})
+
+    def on_close(self):
+        save_settings({"dark_mode": self.dark_mode.get()})
+        self.root.destroy()
 
     def apply_theme(self):
         c = DARK if self.dark_mode.get() else LIGHT
@@ -176,6 +288,62 @@ class AutoTyperApp:
         self.stop_flag.set()
         self.status_var.set("Stopping...")
 
+    def _char_delay_value(self, base_delay, human):
+        d = base_delay
+        if human:
+            d = max(0.0, random.gauss(base_delay, base_delay * 0.5 + 0.01))
+            if random.random() < 0.03:  # occasional longer "thinking" pause
+                d += random.uniform(0.15, 0.4)
+        return d
+
+    def _type_word_with_possible_typo(self, word, base_delay, human, typo_on, typo_chance):
+        """Types a word normally, or (occasionally) mistypes one character,
+        pauses, backspaces it, then retypes it correctly - for realism."""
+        make_typo = (
+            typo_on
+            and len(word) >= 3
+            and random.random() < (typo_chance / 100.0)
+        )
+
+        if not make_typo:
+            for ch in word:
+                if self.stop_flag.is_set():
+                    return False
+                pyautogui.write(ch)
+                time.sleep(self._char_delay_value(base_delay, human))
+            return True
+
+        # pick a position (not the very first char) to fumble
+        typo_index = random.randint(1, len(word) - 1)
+
+        # type the correct prefix
+        for ch in word[:typo_index]:
+            if self.stop_flag.is_set():
+                return False
+            pyautogui.write(ch)
+            time.sleep(self._char_delay_value(base_delay, human))
+
+        # type a wrong character
+        wrong_char = random.choice(TYPO_CHARS)
+        pyautogui.write(wrong_char)
+        time.sleep(self._char_delay_value(base_delay, human))
+
+        # brief pause, like noticing the mistake
+        time.sleep(random.uniform(0.15, 0.4))
+
+        # backspace it out
+        pyautogui.press("backspace")
+        time.sleep(self._char_delay_value(base_delay, human))
+
+        # type the rest correctly, starting from the fumbled character
+        for ch in word[typo_index:]:
+            if self.stop_flag.is_set():
+                return False
+            pyautogui.write(ch)
+            time.sleep(self._char_delay_value(base_delay, human))
+
+        return True
+
     def _type_worker(self, text):
         try:
             delay = self.start_delay.get()
@@ -188,28 +356,57 @@ class AutoTyperApp:
 
             base_delay = max(self.char_delay.get(), 0.0)
             human = self.human_mode.get()
+            fix_indent = self.fix_indent.get()
+            typo_on = self.typo_mode.get()
+            typo_chance = self.typo_chance.get()
+            lines = text.split("\n")
+
+            start_time = time.time()
 
             while True:
                 self.status_var.set("Typing...")
-                for ch in text:
+                for i, line in enumerate(lines):
                     if self.stop_flag.is_set():
                         self._finish("Stopped.")
                         return
 
-                    d = base_delay
-                    if human:
-                        d = max(0.0, random.gauss(base_delay, base_delay * 0.5 + 0.01))
-                        if random.random() < 0.03:  # occasional longer "thinking" pause
-                            d += random.uniform(0.15, 0.4)
+                    if i > 0:
+                        # New line: press Enter, then strip whatever
+                        # auto-indent the editor inserted before typing
+                        # our own (correct) leading whitespace.
+                        pyautogui.press("enter")
+                        if fix_indent:
+                            time.sleep(0.02)
+                            pyautogui.hotkey("shift", "home")
+                            pyautogui.press("delete")
+                        time.sleep(base_delay)
 
-                    pyautogui.write(ch)
-                    time.sleep(d)
+                    # split line into words vs whitespace, preserving exact spacing
+                    tokens = re.split(r"(\s+)", line)
+                    for token in tokens:
+                        if self.stop_flag.is_set():
+                            self._finish("Stopped.")
+                            return
+                        if token == "":
+                            continue
+                        if token.isspace():
+                            # whitespace runs typed plainly, no typo simulation
+                            for ch in token:
+                                pyautogui.write(ch)
+                                time.sleep(self._char_delay_value(base_delay, human))
+                        else:
+                            ok = self._type_word_with_possible_typo(
+                                token, base_delay, human, typo_on, typo_chance
+                            )
+                            if not ok:
+                                return
 
                 if not self.loop_mode.get() or self.stop_flag.is_set():
                     break
                 time.sleep(1)
 
-            self._finish("Done.")
+            elapsed = time.time() - start_time
+            self._finish(f"Done in {elapsed:.1f}s.")
         except pyautogui.FailSafeException:
             self._finish("Aborted (mouse hit screen corner).")
         except Exception as e:
