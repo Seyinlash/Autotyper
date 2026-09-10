@@ -5,12 +5,14 @@ Requires: pyautogui  (install with: pip install pyautogui)
 
 How it works:
 1. Paste/write the text you want typed into the box.
-2. Set a "start delay" - time to click into the target window
-   (browser, doc, chat box, whatever) before typing begins.
-3. Set typing speed + how "human" it should look (random pauses,
-   occasional typos that get backspaced and fixed).
-4. Hit Start. Move your mouse to the top-left corner of the screen
+2. Open Settings to set a "start delay" (time to click into the target
+   window before typing begins), typing speed, human-like variation,
+   auto-indent fix, typo simulation, and loop mode.
+3. Hit Start. Move your mouse to the top-left corner of the screen
    at ANY time to abort instantly (pyautogui failsafe).
+
+All settings (including dark mode) persist across restarts in
+~/.auto_typer_settings.json
 """
 
 import tkinter as tk
@@ -49,13 +51,28 @@ DARK = {
 SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".auto_typer_settings.json")
 TYPO_CHARS = "abcdefghijklmnopqrstuvwxyz"
 
+# Defaults for every persisted setting (used on first run / missing keys)
+DEFAULT_SETTINGS = {
+    "dark_mode": False,
+    "start_delay": 5.0,
+    "char_delay": 0.05,
+    "human_mode": True,
+    "loop_mode": False,
+    "fix_indent": True,
+    "typo_mode": False,
+    "typo_chance": 6.0,
+}
+
 
 def load_settings():
     try:
         with open(SETTINGS_PATH, "r") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception:
-        return {}
+        data = {}
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(data)
+    return merged
 
 
 def save_settings(data):
@@ -66,18 +83,104 @@ def save_settings(data):
         pass  # non-critical, just skip saving if it fails
 
 
+def format_duration(total_seconds):
+    """Shared by the live estimate and the 'Done in ...' status so the
+    two never disagree on formatting again."""
+    if total_seconds < 60:
+        return f"{total_seconds:.1f}s"
+    mins = int(total_seconds // 60)
+    secs = total_seconds % 60
+    return f"{mins}m {secs:.0f}s"
+
+
+class SettingsWindow(tk.Toplevel):
+    """Holds every configuration option. The main window only keeps the
+    text box, Start/Stop/Clear, and status/estimate readouts."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Auto Typer - Settings")
+        self.resizable(False, False)
+        self.transient(app.root)
+
+        pad = {"padx": 10, "pady": 6}
+        frm = ttk.Frame(self)
+        frm.pack(fill="both", expand=True)
+        self.frm = frm
+
+        ttk.Label(frm, text="Start delay (sec):").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Spinbox(frm, from_=0, to=60, increment=0.5, textvariable=app.start_delay,
+                    width=8).grid(row=0, column=1, sticky="w", pady=6)
+
+        ttk.Label(frm, text="Base delay/char (sec):").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Spinbox(frm, from_=0.0, to=1.0, increment=0.01, textvariable=app.char_delay,
+                    width=8).grid(row=1, column=1, sticky="w", pady=6)
+
+        ttk.Checkbutton(frm, text="Human-like variation (random pauses)",
+                         variable=app.human_mode).grid(row=2, column=0, columnspan=2,
+                                                        sticky="w", padx=10, pady=6)
+
+        ttk.Checkbutton(frm, text="Repeat / loop",
+                         variable=app.loop_mode).grid(row=3, column=0, columnspan=2,
+                                                       sticky="w", padx=10, pady=6)
+
+        ttk.Checkbutton(
+            frm,
+            text="Fix editor auto-indent (recommended for VS Code / IDEs)",
+            variable=app.fix_indent
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=6)
+
+        ttk.Checkbutton(
+            frm,
+            text="Simulate typos (randomly misspell a word, then backspace + fix it)",
+            variable=app.typo_mode
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 0))
+
+        ttk.Label(frm, text="Typo chance (%):").grid(row=6, column=0, sticky="w", padx=10, pady=(0, 6))
+        ttk.Spinbox(frm, from_=0, to=100, increment=1, textvariable=app.typo_chance,
+                    width=8).grid(row=6, column=1, sticky="w", pady=(0, 6))
+
+        btn_row = ttk.Frame(frm)
+        btn_row.grid(row=7, column=0, columnspan=2, sticky="e", padx=10, pady=(10, 10))
+        ttk.Button(btn_row, text="Close", command=self._on_close).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.apply_theme()
+
+        # settings changes should save immediately, same as dark mode does
+        for var in (app.start_delay, app.char_delay, app.human_mode, app.loop_mode,
+                    app.fix_indent, app.typo_mode, app.typo_chance):
+            var.trace_add("write", lambda *args: app.save_all_settings())
+
+    def apply_theme(self):
+        c = DARK if self.app.dark_mode.get() else LIGHT
+        self.configure(bg=c["bg"])
+        # ttk widgets pick up the shared style already configured on the app
+
+    def _on_close(self):
+        self.app.save_all_settings()
+        self.destroy()
+        self.app.settings_window = None
+
+
 class AutoTyperApp:
     def __init__(self, root):
         self.root = root
         root.title("Auto Typer")
-        root.geometry("700x680")
-        root.minsize(560, 560)
+        # Startup size == minimum size, on purpose: this is the smallest
+        # size that fits the top bar, text box, status lines, and the
+        # Start/Stop/Clear row without clipping anything. The window can
+        # still be resized larger, just never smaller than this.
+        MIN_WIDTH, MIN_HEIGHT = 700, 700
+        root.geometry(f"{MIN_WIDTH}x{MIN_HEIGHT}")
+        root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self.typing_thread = None
         self.stop_flag = threading.Event()
+        self.settings_window = None
 
         settings = load_settings()
-        self.dark_mode = tk.BooleanVar(value=settings.get("dark_mode", False))
 
         self.style = ttk.Style()
         try:
@@ -87,14 +190,29 @@ class AutoTyperApp:
 
         pad = {"padx": 10, "pady": 6}
 
-        # --- Top bar: label + dark mode toggle ---
+        # --- All settings live as Variables on the app, regardless of
+        # whether the Settings window is currently open ---
+        self.dark_mode = tk.BooleanVar(value=settings["dark_mode"])
+        self.start_delay = tk.DoubleVar(value=settings["start_delay"])
+        self.char_delay = tk.DoubleVar(value=settings["char_delay"])
+        self.human_mode = tk.BooleanVar(value=settings["human_mode"])
+        self.loop_mode = tk.BooleanVar(value=settings["loop_mode"])
+        self.fix_indent = tk.BooleanVar(value=settings["fix_indent"])
+        self.typo_mode = tk.BooleanVar(value=settings["typo_mode"])
+        self.typo_chance = tk.DoubleVar(value=settings["typo_chance"])
+
+        # --- Top bar: label + Settings button + dark mode toggle ---
         top_bar = ttk.Frame(root)
         top_bar.pack(fill="x", padx=10, pady=(10, 0))
         self.label_text = ttk.Label(top_bar, text="Text to type:")
         self.label_text.pack(side="left")
+
         self.dark_check = ttk.Checkbutton(top_bar, text="Dark mode", variable=self.dark_mode,
                                            command=self.on_dark_mode_toggle)
         self.dark_check.pack(side="right")
+
+        self.settings_btn = ttk.Button(top_bar, text="Settings", command=self.open_settings)
+        self.settings_btn.pack(side="right", padx=(0, 10))
 
         # --- Text input with both scrollbars, no word-wrap ---
         text_frame = ttk.Frame(root)
@@ -112,64 +230,24 @@ class AutoTyperApp:
 
         self.text_box.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
 
-        # --- Options frame ---
-        opts = ttk.Frame(root)
-        opts.pack(fill="x", **pad)
-
-        ttk.Label(opts, text="Start delay (sec):").grid(row=0, column=0, sticky="w")
-        self.start_delay = tk.DoubleVar(value=5.0)
-        ttk.Spinbox(opts, from_=0, to=60, increment=0.5, textvariable=self.start_delay,
-                    width=6).grid(row=0, column=1, padx=(4, 20))
-
-        ttk.Label(opts, text="Base delay/char (sec):").grid(row=0, column=2, sticky="w")
-        self.char_delay = tk.DoubleVar(value=0.05)
-        ttk.Spinbox(opts, from_=0.0, to=1.0, increment=0.01, textvariable=self.char_delay,
-                    width=6).grid(row=0, column=3, padx=4)
-
-        self.human_mode = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opts, text="Human-like variation (random pauses)",
-                         variable=self.human_mode).grid(row=1, column=0, columnspan=2,
-                                                         sticky="w", pady=(8, 0))
-
-        self.loop_mode = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opts, text="Repeat / loop", variable=self.loop_mode).grid(
-            row=1, column=2, columnspan=2, sticky="w", pady=(8, 0))
-
-        self.fix_indent = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            opts,
-            text="Fix editor auto-indent (recommended for VS Code / IDEs)",
-            variable=self.fix_indent
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
-
-        self.typo_mode = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            opts,
-            text="Simulate typos (randomly misspell a word, then backspace + fix it)",
-            variable=self.typo_mode
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
-        ttk.Label(opts, text="Typo chance (%):").grid(row=3, column=2, sticky="w", pady=(4, 0))
-        self.typo_chance = tk.DoubleVar(value=6.0)
-        ttk.Spinbox(opts, from_=0, to=100, increment=1, textvariable=self.typo_chance,
-                    width=6).grid(row=3, column=3, padx=4, pady=(4, 0))
-
         # --- Status ---
         self.status_var = tk.StringVar(value="Ready.")
         self.status_label = ttk.Label(root, textvariable=self.status_var)
-        self.status_label.pack(anchor="w", padx=10, pady=(4, 0))
+        self.status_label.pack(anchor="w", padx=10, pady=(8, 0))
 
         self.estimate_var = tk.StringVar(value="Estimated typing time: —")
         self.estimate_label = ttk.Label(root, textvariable=self.estimate_var)
         self.estimate_label.pack(anchor="w", padx=10, pady=(0, 0))
 
-        # --- Buttons ---
+        # --- Buttons: Start / Stop / Clear ---
         btns = ttk.Frame(root)
         btns.pack(fill="x", **pad)
         self.start_btn = ttk.Button(btns, text="Start", command=self.start_typing)
         self.start_btn.pack(side="left", padx=(0, 8))
         self.stop_btn = ttk.Button(btns, text="Stop", command=self.stop_typing, state="disabled")
-        self.stop_btn.pack(side="left")
+        self.stop_btn.pack(side="left", padx=(0, 8))
+        self.clear_btn = ttk.Button(btns, text="Clear", command=self.clear_text)
+        self.clear_btn.pack(side="left")
 
         self.hint_label = ttk.Label(root, text="Tip: flick mouse to a screen corner anytime to abort.")
         self.hint_label.pack(anchor="w", padx=10, pady=(0, 8))
@@ -191,6 +269,18 @@ class AutoTyperApp:
                 "    pip install pyautogui\n\nthen restart this app."
             )
 
+    def open_settings(self):
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+        self.settings_window = SettingsWindow(self)
+
+    def clear_text(self):
+        self.text_box.delete("1.0", "end")
+        self.text_box.edit_modified(False)
+        self.update_estimate()
+
     def _on_text_modified(self, event=None):
         self.text_box.edit_modified(False)  # reset flag so event fires again next edit
         self.update_estimate()
@@ -209,7 +299,7 @@ class AutoTyperApp:
         fix_indent = self.fix_indent.get()
         typo_on = self.typo_mode.get()
         try:
-            typo_chance = self.typo_chance.get() / 100.0
+            typo_chance = max(self.typo_chance.get(), 0.0)
         except tk.TclError:
             typo_chance = 0.0
 
@@ -228,25 +318,33 @@ class AutoTyperApp:
         if typo_on:
             words = re.findall(r"\S+", text)
             eligible = [w for w in words if len(w) >= 3]
-            expected_typos = len(eligible) * typo_chance
+            expected_typos = len(eligible) * (typo_chance / 100.0)
             # extra: one wrong char + noticing pause (~0.275s avg) + one backspace
             typo_seconds = expected_typos * (2 * avg_char_delay + 0.275)
 
         total = base_seconds + line_seconds + typo_seconds
-
-        if total < 60:
-            self.estimate_var.set(f"Estimated typing time: ~{total:.1f}s")
-        else:
-            mins = int(total // 60)
-            secs = total % 60
-            self.estimate_var.set(f"Estimated typing time: ~{mins}m {secs:.0f}s")
+        self.estimate_var.set(f"Estimated typing time: ~{format_duration(total)}")
 
     def on_dark_mode_toggle(self):
         self.apply_theme()
-        save_settings({"dark_mode": self.dark_mode.get()})
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.apply_theme()
+        self.save_all_settings()
+
+    def save_all_settings(self):
+        save_settings({
+            "dark_mode": self.dark_mode.get(),
+            "start_delay": self.start_delay.get(),
+            "char_delay": self.char_delay.get(),
+            "human_mode": self.human_mode.get(),
+            "loop_mode": self.loop_mode.get(),
+            "fix_indent": self.fix_indent.get(),
+            "typo_mode": self.typo_mode.get(),
+            "typo_chance": self.typo_chance.get(),
+        })
 
     def on_close(self):
-        save_settings({"dark_mode": self.dark_mode.get()})
+        self.save_all_settings()
         self.root.destroy()
 
     def apply_theme(self):
@@ -406,7 +504,7 @@ class AutoTyperApp:
                 time.sleep(1)
 
             elapsed = time.time() - start_time
-            self._finish(f"Done in {elapsed:.1f}s.")
+            self._finish(f"Done in {format_duration(elapsed)}.")
         except pyautogui.FailSafeException:
             self._finish("Aborted (mouse hit screen corner).")
         except Exception as e:
