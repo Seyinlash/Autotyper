@@ -449,7 +449,7 @@ class AutoTyperApp:
                 if self.stop_flag.is_set():
                     self._finish("Stopped.")
                     return
-                self.status_var.set(f"Starting in {remaining}s — click into your target window!")
+                self.status_var.set(f"Starting in {remaining}s -click into your target window!")
                 time.sleep(1)
 
             base_delay = max(self.char_delay.get(), 0.0)
