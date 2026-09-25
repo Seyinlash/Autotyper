@@ -235,7 +235,7 @@ class AutoTyperApp:
         self.status_label = ttk.Label(root, textvariable=self.status_var)
         self.status_label.pack(anchor="w", padx=10, pady=(8, 0))
 
-        self.estimate_var = tk.StringVar(value="Estimated typing time: —")
+        self.estimate_var = tk.StringVar(value="Estimated typing time: -")
         self.estimate_label = ttk.Label(root, textvariable=self.estimate_var)
         self.estimate_label.pack(anchor="w", padx=10, pady=(0, 0))
 
@@ -288,7 +288,7 @@ class AutoTyperApp:
     def update_estimate(self):
         text = self.text_box.get("1.0", "end-1c")
         if not text:
-            self.estimate_var.set("Estimated typing time: —")
+            self.estimate_var.set("Estimated typing time: -")
             return
 
         try:
